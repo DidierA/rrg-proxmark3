@@ -456,7 +456,7 @@ int mifare_classic_writeblock(struct Crypto1State *pcs, uint32_t uid, uint8_t bl
     return 0;
 }
 
-int mifare_classic_value(struct Crypto1State *pcs, uint32_t uid, uint8_t blockNo, uint8_t *blockData, uint8_t action) {
+int mifare_classic_value(struct Crypto1State *pcs, uint32_t uid, uint8_t blockNo, uint8_t blockDst, uint8_t *blockData, uint8_t action) {
     // variables
     uint16_t len = 0;
     uint32_t pos = 0;
@@ -471,8 +471,10 @@ int mifare_classic_value(struct Crypto1State *pcs, uint32_t uid, uint8_t blockNo
 
     if (action == 0x01)
         command = MIFARE_CMD_DEC;
+    if (action == 0x05)
+        command = MIFARE_CMD_RESTORE;
 
-    // Send increment or decrement command
+    // Send increment, decrement or restore command (part 1)
     len = mifare_sendcmd_short(pcs, 1, command, blockNo, receivedAnswer, receivedAnswerPar, NULL);
 
     if ((len != 1) || (receivedAnswer[0] != 0x0A)) {   //  0x0a - ACK
@@ -488,7 +490,7 @@ int mifare_classic_value(struct Crypto1State *pcs, uint32_t uid, uint8_t blockNo
         d_block_enc[pos] = crypto1_byte(pcs, 0x00, 0) ^ d_block[pos];
         par[pos >> 3] |= (((filter(pcs->odd) ^ oddparity8(d_block[pos])) & 0x01) << (7 - (pos & 0x0007)));
     }
-
+    // send data (part 2)
     ReaderTransmitPar(d_block_enc, 6, par, NULL);
 
     // Receive the response NO Response means OK ... i.e. NOT NACK
@@ -506,8 +508,8 @@ int mifare_classic_value(struct Crypto1State *pcs, uint32_t uid, uint8_t blockNo
             return 2;
         }
     } else {
-        // send trnasfer (commit the change)
-        len = mifare_sendcmd_short(pcs, 1, MIFARE_CMD_TRANSFER, blockNo, receivedAnswer, receivedAnswerPar, NULL);
+        // send transfer (commit the change)
+        len = mifare_sendcmd_short(pcs, 1, MIFARE_CMD_TRANSFER, blockDst, receivedAnswer, receivedAnswerPar, NULL);
         if ((len != 1) || (receivedAnswer[0] != 0x0A)) {   //  0x0a - ACK
             if (g_dbglevel >= DBG_ERROR) Dbprintf("Cmd Error: %02x", receivedAnswer[0]);
             return 1;

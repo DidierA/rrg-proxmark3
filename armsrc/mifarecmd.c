@@ -446,10 +446,8 @@ void MifareWriteBlock(uint8_t arg0, uint8_t arg1, uint8_t *datain) {
     set_tracing(false);
 }
 
-void MifareValue(uint8_t arg0, uint8_t arg1, uint8_t *datain) {
+void MifareValue(uint8_t blockNo, uint8_t keyType, uint8_t blockDst, uint8_t *datain) {
     // params
-    uint8_t blockNo = arg0;
-    uint8_t keyType = arg1;
     uint64_t ui64Key = 0;
     uint8_t blockdata[16] = {0x00};
 
@@ -485,7 +483,7 @@ void MifareValue(uint8_t arg0, uint8_t arg1, uint8_t *datain) {
             break;
         };
 
-        if (mifare_classic_value(pcs, cuid, blockNo, blockdata, action)) {
+        if (mifare_classic_value(pcs, cuid, blockNo, blockDst, blockdata, action)) {
             if (g_dbglevel >= DBG_ERROR) Dbprintf("Write block error");
             break;
         };
