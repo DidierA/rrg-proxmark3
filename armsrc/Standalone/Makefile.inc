@@ -129,6 +129,10 @@ endif
 ifneq (,$(findstring WITH_STANDALONE_HF_REBLAY,$(APP_CFLAGS)))
     SRC_STANDALONE = hf_reblay.c
 endif
+# WITH_STANDALONE_HF_REBLAY_DESFIRE
+ifneq (,$(findstring WITH_STANDALONE_HF_REBLAY_DESFIRE,$(APP_CFLAGS)))
+    SRC_STANDALONE = hf_reblay_desfire.c
+endif
 # WITH_STANDALONE_HF_TCPRST
 ifneq (,$(findstring WITH_STANDALONE_HF_TCPRST,$(APP_CFLAGS)))
     SRC_STANDALONE = hf_tcprst.c
