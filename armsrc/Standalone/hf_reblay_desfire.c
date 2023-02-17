@@ -215,9 +215,10 @@ void RunMod() {
             LED_B_OFF();
             // Clean receive command buffer
             if (!GetIso14443aCommandFromReader(receivedCmd, receivedCmdPar, &len)) {
-                DbpString(_YELLOW_("!!") "Emulator stopped");
-                retval = PM3_EOPABORTED;
-                break;
+                DbpString(_YELLOW_("!!") "GetIso1443aCommandFromReader() returned false");
+                // DbpString(_YELLOW_("!!") "Emulator stopped");
+                // retval = PM3_EOPABORTED;
+                // break;
             }// else { // too slow
             //     DbpString(_GREEN_("[") "Received data from reader:");
             //     Dbhexdump(len,receivedCmd, false);
@@ -310,6 +311,7 @@ void RunMod() {
                         DbpString(_YELLOW_("[ ") "New command: sent it & waiting for Bluetooth response!" _YELLOW_(" ]"));
                         usart_writebuffer_sync(buffert, bufferlen + 1);
                         p_response = NULL;
+                        resp=2; // added by DA 
                     }
 
                 } else {
