@@ -32,10 +32,9 @@
 #include "usart.h" // Bluetooth reading & writing
 
 void ModInfo(void) {
-    DbpString("  HF - Relaying DESFire data over Bluetooth - (Salvador Mendoza)");
+    DbpString("  HF - Relaying DESFire data over Bluetooth - (Salvador Mendoza, DidierA)");
 }
-/* This standalone implements two different modes: reading & emulating, to switch between them
-* just press the button.
+/* This standalone implements emulating a DESFire tag.
 *
 * Reading ISO-14443A technology is not limited to payment cards. This example
 * was designed to open new possibilities relaying ISO-14443A data over Bluetooth.
@@ -45,15 +44,7 @@ void ModInfo(void) {
 * I recommend setting up & run the other end before start sending or receiving data in this Proxmark3
 * standalone.
 *
-* For the reading mode:
-* - Set up and run the other end first, to where the Proxmark will send the data.
-* - After the card is detected, Proxmark3 will send a package. The first byte will be the package
-*   length, then, the card data. Use the first length byte to read the whole package.
-* - Proxmark3 will expect a raw APDU from the other end, then it will be sent to the card.
-* - The answer of the card will be sent back to the connection, repeating the cycle.
-*
-* For the emulation mode:
-* - Set up and run the other end first, from where the Proxmark will receive the data.
+* - Set up and run the other end first, from where the Proxmark will receive the data. See tools/pm3-reblay_desfire.py
 * - When the Proxmark3 detected the terminal, it will send the command to the connection.
 * - The first byte will be the package length, then, the terminal command. Use the first
 *   length byte to read the whole package.
@@ -61,7 +52,7 @@ void ModInfo(void) {
 * - The command of the terminal will be sent back to the connection, repeating the cycle.
 *
 *  Notes:
-* - The emulation mode was tested in a real SumUp payment terminal. This does not mean
+* - The emulation mode was tested in a test environment with DESFire EV2. This does not mean
 *   that it will work in all the terminals around the world.
 * - The emulation mode implements different techniques to try to keep the connection alive:
 *   WTX or ACK for NACK requests. Some of these requests could be denied depending on
@@ -73,7 +64,7 @@ void ModInfo(void) {
 
 void RunMod() {
     StandAloneMode();
-    Dbprintf(_YELLOW_(">>")  "Relaying DESFire data over Bluetooth a.k.a. reblay Started<<");
+    Dbprintf(_YELLOW_(">>")  "Relaying DESFire data over Bluetooth a.k.a. reblay_desfire Started<<");
     FpgaDownloadAndGo(FPGA_BITSTREAM_HF);
 
 // Allocate 512 bytes for the dynamic modulation, created when the reader queries for it
@@ -98,26 +89,9 @@ void RunMod() {
     uint8_t rpacket[MAX_FRAME_SIZE] = { 0x00 };
     uint16_t lenpacket;
 
-    // For answering the commands
-    // uint8_t apdubuffer[MAX_FRAME_SIZE] = { 0x00 };
-    // uint8_t apdulen = 0;
-
     // Buffer for Bluetooth data
     uint8_t buffert[MAX_FRAME_SIZE] = { 0x00 };
     uint8_t bufferlen = 0;
-
-    // Reading card
-    // iso14a_card_select_t card_a_info;
-
-    // For init ping process
-    // uint8_t sak = {0x0};
-    // uint8_t atqa[2] = { 0x00, 0x00 };
-    // uint8_t uidc[10] = { 0x00 };
-    // uint8_t uidlen = 0;
-    // uint8_t ats[MAX_FRAME_SIZE] = { 0x00 };
-    // uint8_t atsl = 0;
-
-    // uint8_t rdata[14] = { 0x00 };
 
     // Command buffers
     uint8_t receivedCmd[MAX_FRAME_SIZE] = { 0x00 };
@@ -214,11 +188,13 @@ void RunMod() {
         for (;;) {
             LED_B_OFF();
             // Clean receive command buffer
-            if (!GetIso14443aCommandFromReader(receivedCmd, receivedCmdPar, &len)) {
-                DbpString(_YELLOW_("!!") "GetIso1443aCommandFromReader() returned false");
-                // DbpString(_YELLOW_("!!") "Emulator stopped");
-                // retval = PM3_EOPABORTED;
-                // break;
+            if ( !GetIso14443aCommandFromReader(receivedCmd, receivedCmdPar, &len)) {
+                // Button held down or pressed?
+                if (BUTTON_PRESS()) {
+                    DbpString(_YELLOW_("!!") "Emulator stopped");
+                    retval = PM3_EOPABORTED;
+                    break;
+                }
             }// else { // too slow
             //     DbpString(_GREEN_("[") "Received data from reader:");
             //     Dbhexdump(len,receivedCmd, false);
