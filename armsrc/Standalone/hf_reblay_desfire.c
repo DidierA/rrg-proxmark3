@@ -45,11 +45,15 @@ void ModInfo(void) {
 * standalone.
 *
 * - Set up and run the other end first, from where the Proxmark will receive the data. See tools/pm3-reblay_desfire.py
+* - At start, the Proxmark sends a ping and waits for a 7-byte UID, which will be used for emulation.
 * - When the Proxmark3 detected the terminal, it will send the command to the connection.
 * - The first byte will be the package length, then, the terminal command. Use the first
 *   length byte to read the whole package.
 * - Proxmark3 will expect a raw APDU from the other end, then it will be sent to the terminal.
 * - The command of the terminal will be sent back to the connection, repeating the cycle.
+*
+* - You can exit by holding the button for 1sec.
+* - A short click on the button will clear the trace and restart emulation with the same UID
 *
 *  Notes:
 * - The emulation mode was tested in a test environment with DESFire EV2. This does not mean
@@ -108,17 +112,10 @@ void RunMod() {
         .modulation_n = 0
     };
 
-#define STATE_READ 0
-#define STATE_EMU 1
+    DbpString(_YELLOW_("[ ") "In emulation mode" _YELLOW_(" ]"));
 
-    uint8_t state = STATE_EMU;
-
-    if (state == STATE_READ) {
-        DbpString(_YELLOW_("[ ") "In reading mode" _YELLOW_(" ]"));
-    } else {
-        DbpString(_YELLOW_("[ ") "In emulation mode" _YELLOW_(" ]"));
-    }
-
+    uint8_t initialized = 0;
+#define VERBOSE 0 // attempt to gain speed by suppressing messages
     for (;;) {
         WDT_HIT();
 
@@ -130,35 +127,33 @@ void RunMod() {
 
         if (button_pressed  == BUTTON_HOLD) // Holding down the button
             break;
-        else if (button_pressed == BUTTON_SINGLE_CLICK) { // Pressing one time change between reading & emulation
-            DbpString(_YELLOW_("[ ") "In emulation mode. Long press to stop." _YELLOW_(" ]"));
-        }
 
         SpinDelay(500);
 
         LED_A_OFF();
         LED_C_ON();
+        if (!initialized) {
+            // Tell bluetooth side we are ready
+            buffert[0]=1;
+            usart_writebuffer_sync(buffert, 2);
 
-        // Tell bluetooth side we are ready
-        buffert[0]=1;
-        usart_writebuffer_sync(buffert, 2);
+            // Receive card info from bluetooth
+            lenpacket = usart_read_ng(rpacket, sizeof(rpacket));
 
-        // Receive card info from bluetooth
-        // while ( ! usart_rxdata_available()) ;
-        lenpacket = usart_read_ng(rpacket, sizeof(rpacket));
-
-        // We should receive 7 byte UID
-        if (lenpacket > 0) {
-            DbpString(_YELLOW_("[ ") "Received Bluetooth data" _YELLOW_(" ]"));
-            Dbhexdump(lenpacket, rpacket, false);
-            if (lenpacket != 7) {
-                DbpString(_RED_("[ ") "Wrong length. expected 8" _RED_(" ]"));
-            } else {
-                memcpy(&data, rpacket, 7);
-                DbpString(_GREEN_("[ ") "Set into emulator UID" _GREEN_(" ]"));
+            // We should receive 7 byte UID
+            if (lenpacket > 0) {
+                DbpString(_YELLOW_("[ ") "Received Bluetooth data" _YELLOW_(" ]"));
+                Dbhexdump(lenpacket, rpacket, false);
+                if (lenpacket != 7) {
+                    DbpString(_RED_("[ ") "Wrong length. expected 8" _RED_(" ]"));
+                } else {
+                    memcpy(&data, rpacket, 7);
+                    DbpString(_GREEN_("[ ") "Set into emulator UID" _GREEN_(" ]"));
+                    initialized=1 ;
+                }
             }
         }
-        
+
         // free eventually allocated BigBuf memory but keep Emulator Memory
         BigBuf_free_keep_EM();
 
@@ -177,7 +172,7 @@ void RunMod() {
         int len = 0; // Command length
         int retval = PM3_SUCCESS; // Check emulation status
 
-        uint8_t resp = 0; // Bluetooth response
+        uint8_t btresp = 0; // Bluetooth response
         lenpacket = 0;
 
         uint8_t prevcmd = 0x00; // Keep track of last terminal type command
@@ -195,28 +190,27 @@ void RunMod() {
                     retval = PM3_EOPABORTED;
                     break;
                 }
-            }// else { // too slow
-            //     DbpString(_GREEN_("[") "Received data from reader:");
-            //     Dbhexdump(len,receivedCmd, false);
-            //     DbpString(_GREEN_("]") "EOReceived data from reader");
-            // }
+                len=0;
+            }
             tag_response_info_t *p_response = NULL;
             LED_B_ON();
 
             // dynamic_response_info will be in charge of responses
             dynamic_response_info.response_n = 0;
 
-            if (lenpacket == 0 && resp == 2) { // Check for Bluetooth packages
+            if (lenpacket == 0 && btresp == 2) { // Check for Bluetooth packages
                 if (usart_rxdata_available()) {
                     lenpacket = usart_read_ng(rpacket, sizeof(rpacket));
 
                     if (lenpacket > 0) {
+                    #if VERBOSE
                         DbpString(_YELLOW_("[ ") "Received Bluetooth data" _YELLOW_(" ]"));
                         Dbhexdump(lenpacket, rpacket, false);
+                    #endif
                         memcpy(&dynamic_response_info.response[1], rpacket, lenpacket);
                         dynamic_response_info.response[0] = prevcmd;
                         dynamic_response_info.response_n = lenpacket + 1;
-                        resp = 1;
+                        btresp = 1;
                     }
                 }
             }
@@ -226,11 +220,11 @@ void RunMod() {
             } else if (receivedCmd[0] == ISO14443A_CMD_HALT && len == 4) {  // Received a HALT
                 DbpString(_YELLOW_("+") "Received a HALT");
                 p_response = NULL;
-                resp = 0;
+                btresp = 0;
             } else if (receivedCmd[0] == ISO14443A_CMD_WUPA && len == 1) {  // Received a WAKEUP
 //                    DbpString(_YELLOW_("+") "WAKEUP Received");
                 p_response = &responses[RESP_INDEX_ATQA];
-                resp = 0;
+                btresp = 0;
             } else if (receivedCmd[1] == 0x20 && receivedCmd[0] == ISO14443A_CMD_ANTICOLL_OR_SELECT && len == 2) {  // Received request for UID (cascade 1)
 //                   DbpString(_YELLOW_("+") "Request for UID C1");
                 p_response = &responses[RESP_INDEX_UIDC1];
@@ -244,69 +238,91 @@ void RunMod() {
             } else if (receivedCmd[0] == ISO14443A_CMD_RATS && len == 4) {  // Received a RATS request
 //                    DbpString(_YELLOW_("+") "Request for RATS");
                 p_response = &responses[RESP_INDEX_RATS];
-                resp = 1;
+                btresp = 1;
             } else if (receivedCmd[0] == 0xf2 && len == 4) {  // ACKed - Time extension
+            #if VERBOSE
                 DbpString(_YELLOW_("!!") "Reader accepted time extension!");
+            #endif
                 p_response = NULL;
             } else if ((receivedCmd[0] == 0xb2 || receivedCmd[0] == 0xb3) && len == 3) { //NACK - Request more time WTX
+            #if VERBOSE
                 DbpString(_YELLOW_("!!") "NACK - time extension request?");
-                if (resp == 2 && lenpacket == 0) {
+            #endif
+                if (btresp == 2 && lenpacket == 0) {
+                #if VERBOSE
                     DbpString(_YELLOW_("!!") "Requesting more time - WTX");
+                #endif
                     dynamic_response_info.response_n = 2;
                     dynamic_response_info.response[0] = 0xf2;
                     dynamic_response_info.response[1] = 0x0b;  // Requesting the maximum amount of time
                 } else if (lenpacket == 0) {
+                #if VERBOSE
                     DbpString(_YELLOW_("!!") "NACK - ACK - Resend last command!"); // To burn some time as well
+                #endif
                     dynamic_response_info.response[0] = 0xa3;
                     dynamic_response_info.response_n = 1;
                 } else {
+                #if VERBOSE
                     DbpString(_YELLOW_("!!") "Avoiding request - Bluetooth data already in memory!!");
+                #endif
                 }
             } else {
-                DbpString(_GREEN_("[ ") "Card reader command" _GREEN_(" ]"));
-                if (len <=0 ) {
-                    DbpString(_YELLOW_("Too short"));
-                } else Dbhexdump(len, receivedCmd, false); 
-                if ((receivedCmd[0] == 0x02 || receivedCmd[0] == 0x03) && len > 3) { // Process reader commands
+                if (len >0) {
+                #if VERBOSE
+                    DbpString(_GREEN_("[ ") "Card reader command" _GREEN_(" ]"));
+                    Dbhexdump(len, receivedCmd, false);
+                #endif
+                    if ((receivedCmd[0] == 0x02 || receivedCmd[0] == 0x03) && len > 3) { // Process reader commands
 
-                    if (resp == 1) {
-                        prevcmd = receivedCmd[0];
-                        bufferlen = len - 3;
-                        memcpy(&buffert[0], &bufferlen, 1);
-                        memcpy(&buffert[1], &receivedCmd[1], bufferlen);
-                        resp = 2;
-                    }
-                    if (lenpacket > 0) {
-                        DbpString(_YELLOW_("[ ") "Answering using Bluetooth data!" _YELLOW_(" ]"));
-                        memcpy(&dynamic_response_info.response[1], rpacket, lenpacket);
-                        dynamic_response_info.response[0] = receivedCmd[0];
-                        dynamic_response_info.response_n = lenpacket + 1;
-                        lenpacket = 0;
-                        resp = 1;
-                    } else {
-                        DbpString(_YELLOW_("[ ") "New command: sent it & waiting for Bluetooth response!" _YELLOW_(" ]"));
-                        usart_writebuffer_sync(buffert, bufferlen + 1);
-                        p_response = NULL;
-                        resp=2; // added by DA 
-                    }
+                        if (btresp == 1) {
+                            prevcmd = receivedCmd[0];
+                            bufferlen = len - 3;
+                            memcpy(&buffert[0], &bufferlen, 1);
+                            memcpy(&buffert[1], &receivedCmd[1], bufferlen);
+                            btresp = 2;
+                        }
+                        if (lenpacket > 0) {
+                        #if VERBOSE
+                            DbpString(_YELLOW_("[ ") "Answering using Bluetooth data!" _YELLOW_(" ]"));
+                        #endif
+                            memcpy(&dynamic_response_info.response[1], rpacket, lenpacket);
+                            dynamic_response_info.response[0] = receivedCmd[0];
+                            dynamic_response_info.response_n = lenpacket + 1;
+                            lenpacket = 0;
+                            btresp = 1;
+                        } else {
+                        #if VERBOSE
+                            DbpString(_YELLOW_("[ ") "New command: sent it & waiting for Bluetooth response!" _YELLOW_(" ]"));
+                        #endif
+                            usart_writebuffer_sync(buffert, bufferlen + 1);
+                            p_response = NULL;
+                            btresp=2; // added by DA 
+                        }
 
-                } else {
-                    if (lenpacket == 0) {
-                        DbpString(_YELLOW_("!!") "Received unknown command!");
-                        memcpy(dynamic_response_info.response, receivedCmd, len);
-                        dynamic_response_info.response_n = len;
                     } else {
-                        DbpString(_YELLOW_("!!") "Avoiding unknown command - Bluetooth data already in memory!!");
+                        if (lenpacket == 0 ) {
+                        #if VERBOSE
+                            DbpString(_YELLOW_("!!") "Received unknown command!");
+                        #endif
+                            memcpy(dynamic_response_info.response, receivedCmd, len);
+                            dynamic_response_info.response_n = len;
+                        } else  {
+                        #if VERBOSE
+                            DbpString(_YELLOW_("!!") "Avoiding unknown command - Bluetooth data already in memory!!");
+                        #endif
+                        }
                     }
                 }
             }
             if (dynamic_response_info.response_n > 0) {
+            #if VERBOSE
                 DbpString(_GREEN_("[ ") "Proxmark3 answer" _GREEN_(" ]"));
                 Dbhexdump(dynamic_response_info.response_n, dynamic_response_info.response, false);
                 DbpString("----");
+            #endif
                 if (lenpacket > 0) {
                     lenpacket = 0;
-                    resp = 1;
+                    btresp = 1;
                 }
                 // Add CRC bytes, always used in ISO 14443A-4 compliant cards
                 AddCrc14A(dynamic_response_info.response, dynamic_response_info.response_n);
@@ -331,6 +347,7 @@ void RunMod() {
         BigBuf_free_keep_EM();
         reply_ng(CMD_HF_MIFARE_SIMULATE, retval, NULL, 0);
     }
+
     DbpString(_YELLOW_("[=]") "exiting");
     if (usart_rxdata_available()) {
         lenpacket = usart_read_ng(rpacket, sizeof(rpacket));
